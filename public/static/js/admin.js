@@ -2867,6 +2867,135 @@ function copyToClipboard(inputId) {
 }
 
 // ============================================
+// 通用查询表单组件
+// ============================================
+
+/**
+ * 生成查询表单HTML
+ * @param {Object} config - 配置对象
+ * @param {string} config.formId - 表单ID
+ * @param {Array} config.fields - 字段配置数组
+ * @param {Function} config.onSearch - 搜索回调函数
+ * @param {Function} config.onReset - 重置回调函数
+ * @returns {string} HTML字符串
+ */
+function createSearchForm(config) {
+  const { formId, fields, onSearch, onReset } = config
+  
+  const fieldHtml = fields.map(field => {
+    switch (field.type) {
+      case 'text':
+        return `
+          <div class="form-group">
+            <label class="form-label">${field.label}</label>
+            <input type="text" id="${field.id}" class="form-input" placeholder="${field.placeholder || ''}" ${field.maxlength ? `maxlength="${field.maxlength}"` : ''}>
+          </div>
+        `
+      case 'number':
+        return `
+          <div class="form-group">
+            <label class="form-label">${field.label}</label>
+            <input type="number" id="${field.id}" class="form-input" placeholder="${field.placeholder || ''}" ${field.min !== undefined ? `min="${field.min}"` : ''} ${field.max !== undefined ? `max="${field.max}"` : ''}>
+          </div>
+        `
+      case 'date':
+        return `
+          <div class="form-group">
+            <label class="form-label">${field.label}</label>
+            <input type="date" id="${field.id}" class="form-input">
+          </div>
+        `
+      case 'daterange':
+        return `
+          <div class="form-group col-span-2">
+            <label class="form-label">${field.label}</label>
+            <div class="grid grid-2 gap-2">
+              <input type="date" id="${field.fromId}" class="form-input" placeholder="开始日期">
+              <input type="date" id="${field.toId}" class="form-input" placeholder="结束日期">
+            </div>
+          </div>
+        `
+      case 'select':
+        return `
+          <div class="form-group">
+            <label class="form-label">${field.label}</label>
+            <select id="${field.id}" class="form-select">
+              <option value="">全部</option>
+              ${field.options.map(opt => `<option value="${opt.value}">${opt.label}</option>`).join('')}
+            </select>
+          </div>
+        `
+      case 'amountrange':
+        return `
+          <div class="form-group col-span-2">
+            <label class="form-label">${field.label}</label>
+            <div class="grid grid-2 gap-2">
+              <input type="number" id="${field.minId}" class="form-input" placeholder="最小金额" min="0" step="0.01">
+              <input type="number" id="${field.maxId}" class="form-input" placeholder="最大金额" min="0" step="0.01">
+            </div>
+          </div>
+        `
+      default:
+        return ''
+    }
+  }).join('')
+  
+  return `
+    <div class="card mb-4">
+      <div class="card-body">
+        <form id="${formId}" class="search-form">
+          <div class="grid grid-4 gap-md">
+            ${fieldHtml}
+          </div>
+          <div class="flex gap-2 mt-4">
+            <button type="submit" class="btn btn-primary">
+              <i class="fas fa-search mr-1"></i>查询
+            </button>
+            <button type="button" onclick="${onReset}" class="btn btn-secondary">
+              <i class="fas fa-redo mr-1"></i>重置
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  `
+}
+
+/**
+ * 从表单获取查询参数
+ * @param {Array} fields - 字段配置
+ * @returns {Object} 查询参数对象
+ */
+function getSearchParams(fields) {
+  const params = {}
+  fields.forEach(field => {
+    if (field.type === 'daterange') {
+      const fromValue = document.getElementById(field.fromId)?.value
+      const toValue = document.getElementById(field.toId)?.value
+      if (fromValue) params[field.fromParam || 'date_from'] = fromValue
+      if (toValue) params[field.toParam || 'date_to'] = toValue
+    } else if (field.type === 'amountrange') {
+      const minValue = document.getElementById(field.minId)?.value
+      const maxValue = document.getElementById(field.maxId)?.value
+      if (minValue) params[field.minParam || 'min_amount'] = minValue
+      if (maxValue) params[field.maxParam || 'max_amount'] = maxValue
+    } else {
+      const value = document.getElementById(field.id)?.value
+      if (value) params[field.param || field.id] = value
+    }
+  })
+  return params
+}
+
+/**
+ * 重置表单
+ * @param {string} formId - 表单ID
+ */
+function resetSearchForm(formId) {
+  document.getElementById(formId)?.reset()
+}
+
+// ============================================
 // 完整功能实现 - 注单管理
 // ============================================
 
@@ -5826,17 +5955,49 @@ async function loadPlayerReport() {
     const players = result.data || []
     
     container.innerHTML = `
-      <!-- 筛选器 -->
-      <div class="flex flex-wrap items-center gap-3 mb-4">
-        <div class="flex items-center gap-2">
-          <label class="text-sm text-gray-500">日期:</label>
-          <input type="date" id="playerDateFrom" class="form-input form-input-sm" value="${monthAgo}">
-          <span class="text-gray-400">至</span>
-          <input type="date" id="playerDateTo" class="form-input form-input-sm" value="${today}">
-        </div>
-        <input type="text" id="playerUsernameSearch" class="form-input form-input-sm" placeholder="会员账号" style="width:120px;">
-        <button onclick="searchPlayerReport()" class="btn btn-primary btn-sm"><i class="fas fa-search mr-1"></i>查询</button>
-        <button onclick="exportPlayerReport()" class="btn btn-success btn-sm"><i class="fas fa-download mr-1"></i>导出</button>
+      <!-- 高级筛选器 -->
+      <div class="bg-gray-50 p-4 rounded-lg mb-4">
+        <form id="playerReportSearchForm" onsubmit="searchPlayerReport(event)">
+          <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+            <div>
+              <label class="text-xs text-gray-500 mb-1 block">会员账号</label>
+              <input type="text" id="playerUsernameSearch" class="form-input form-input-sm" placeholder="输入会员账号">
+            </div>
+            <div>
+              <label class="text-xs text-gray-500 mb-1 block">会员ID</label>
+              <input type="number" id="playerIdSearch" class="form-input form-input-sm" placeholder="输入会员ID">
+            </div>
+            <div>
+              <label class="text-xs text-gray-500 mb-1 block">代理ID</label>
+              <input type="number" id="playerAgentIdSearch" class="form-input form-input-sm" placeholder="输入代理ID">
+            </div>
+            <div>
+              <label class="text-xs text-gray-500 mb-1 block">最小投注额</label>
+              <input type="number" id="playerMinBet" class="form-input form-input-sm" placeholder="最小投注额" min="0">
+            </div>
+          </div>
+          <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <div>
+              <label class="text-xs text-gray-500 mb-1 block">开始日期</label>
+              <input type="date" id="playerDateFrom" class="form-input form-input-sm" value="${monthAgo}">
+            </div>
+            <div>
+              <label class="text-xs text-gray-500 mb-1 block">结束日期</label>
+              <input type="date" id="playerDateTo" class="form-input form-input-sm" value="${today}">
+            </div>
+            <div class="col-span-2 flex items-end gap-2">
+              <button type="submit" class="btn btn-primary btn-sm">
+                <i class="fas fa-search mr-1"></i>查询
+              </button>
+              <button type="button" onclick="resetPlayerReportFilter()" class="btn btn-secondary btn-sm">
+                <i class="fas fa-undo mr-1"></i>重置
+              </button>
+              <button type="button" onclick="exportPlayerReport()" class="btn btn-success btn-sm">
+                <i class="fas fa-download mr-1"></i>导出
+              </button>
+            </div>
+          </div>
+        </form>
       </div>
       
       <!-- 表格 -->
@@ -6554,7 +6715,89 @@ async function exportAgentReport() {
 }
 
 // 搜索/导出会员报表
-async function searchPlayerReport() {
+async function searchPlayerReport(e) {
+  if (e) e.preventDefault()
+  
+  const container = document.getElementById('reportContent')
+  if (!container) return
+  
+  const params = {
+    limit: 100
+  }
+  
+  const username = document.getElementById('playerUsernameSearch')?.value
+  const playerId = document.getElementById('playerIdSearch')?.value
+  const agentId = document.getElementById('playerAgentIdSearch')?.value
+  const minBet = document.getElementById('playerMinBet')?.value
+  const dateFrom = document.getElementById('playerDateFrom')?.value
+  const dateTo = document.getElementById('playerDateTo')?.value
+  
+  if (username) params.username = username
+  if (playerId) params.player_id = playerId
+  if (agentId) params.agent_id = agentId
+  if (minBet) params.min_bet = minBet
+  if (dateFrom) params.date_from = dateFrom
+  if (dateTo) params.date_to = dateTo
+  
+  try {
+    const result = await API.get('/reports/players', params)
+    const players = result.data || []
+    
+    // 只更新表格部分，保留查询表单
+    const tableContainer = container.querySelector('.data-table-wrapper')
+    if (tableContainer) {
+      tableContainer.innerHTML = `
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>会员账号</th>
+              <th>代理</th>
+              <th class="text-center">VIP</th>
+              <th class="text-right">投注笔数</th>
+              <th class="text-right">总投注额</th>
+              <th class="text-right">有效投注</th>
+              <th class="text-right">会员盈利</th>
+              <th class="text-right">会员亏损</th>
+              <th class="text-right">净盈亏</th>
+              <th class="text-right">总充值</th>
+              <th class="text-right">总提款</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${players.length === 0 ? `<tr><td colspan="11">${showEmpty('user', '暂无会员数据')}</td></tr>` :
+              players.map(p => `
+                <tr>
+                  <td class="font-semibold">${escapeHtml(p.username || '-')}</td>
+                  <td class="text-gray-600 text-sm">${escapeHtml(p.agent_name || '-')}</td>
+                  <td class="text-center"><span class="badge badge-warning">VIP${p.vip_level || 0}</span></td>
+                  <td class="text-right">${p.bet_count || 0}</td>
+                  <td class="text-right font-mono">${formatCurrency(p.total_bet || 0)}</td>
+                  <td class="text-right font-mono">${formatCurrency(p.valid_bet || 0)}</td>
+                  <td class="text-right font-mono text-emerald-600">${formatCurrency(p.player_win || 0)}</td>
+                  <td class="text-right font-mono text-red-600">${formatCurrency(p.player_loss || 0)}</td>
+                  <td class="text-right font-mono font-semibold ${(p.net_profit || 0) >= 0 ? 'text-emerald-600' : 'text-red-600'}">
+                    ${formatCurrency(p.net_profit || 0)}
+                  </td>
+                  <td class="text-right font-mono text-blue-600">${formatCurrency(p.total_deposit || 0)}</td>
+                  <td class="text-right font-mono text-orange-600">${formatCurrency(p.total_withdrawal || 0)}</td>
+                </tr>
+              `).join('')}
+          </tbody>
+        </table>
+      `
+    }
+  } catch (error) {
+    showNotification('查询失败: ' + error.message, 'danger')
+  }
+}
+
+// 重置会员报表筛选
+function resetPlayerReportFilter() {
+  document.getElementById('playerReportSearchForm')?.reset()
+  const today = new Date().toISOString().split('T')[0]
+  const monthAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
+  document.getElementById('playerDateFrom').value = monthAgo
+  document.getElementById('playerDateTo').value = today
   loadPlayerReport()
 }
 
@@ -6850,16 +7093,13 @@ async function switchFinanceTab(tab) {
         renderPendingWithdrawals(container, pendingData.data)
         break
       case 'deposits':
-        const depositsData = await API.get('/deposits', { limit: 50 })
-        renderDepositsList(container, depositsData.data)
+        renderDepositsQuery(container)
         break
       case 'withdrawals':
-        const withdrawalsData = await API.get('/withdrawals', { limit: 50 })
-        renderWithdrawalsList(container, withdrawalsData.data)
+        renderWithdrawalsQuery(container)
         break
       case 'transactions':
-        const transData = await API.get('/transactions', { limit: 50 })
-        renderTransactionsList(container, transData.data)
+        renderTransactionsQuery(container)
         break
       case 'payment-methods':
         await renderPaymentMethods(container)
@@ -6900,76 +7140,426 @@ function renderPendingWithdrawals(container, data) {
   `
 }
 
-// 渲染存款列表
-function renderDepositsList(container, data) {
+// 渲染存款查询页面
+async function renderDepositsQuery(container) {
+  const today = new Date().toISOString().split('T')[0]
+  const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
+  
   container.innerHTML = `
-    <div class="data-table-wrapper">
-      <table class="data-table">
-        <thead><tr><th>订单号</th><th>玩家</th><th class="text-right">金额</th><th>支付方式</th><th>状态</th><th>时间</th></tr></thead>
-        <tbody>
-          ${data.length === 0 ? `<tr><td colspan="6">${showEmpty('inbox', '暂无存款记录')}</td></tr>` :
-            data.map(d => `
-              <tr>
-                <td class="font-mono text-sm">${d.order_no}</td>
-                <td class="font-semibold">${escapeHtml(d.username || '-')}</td>
-                <td class="text-right font-mono text-emerald-600 font-semibold">${formatCurrency(d.amount)}</td>
-                <td>${escapeHtml(d.payment_method || '-')}</td>
-                <td>${getStatusBadge(d.status, 'deposit')}</td>
-                <td class="text-gray-500 text-sm">${formatShortDate(d.created_at)}</td>
-              </tr>
-            `).join('')}
-        </tbody>
-      </table>
+    <!-- 查询表单 -->
+    <div class="bg-gray-50 p-4 rounded-lg mb-4">
+      <form id="depositsSearchForm" onsubmit="searchDeposits(event)">
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+          <div>
+            <label class="text-xs text-gray-500 mb-1 block">订单号</label>
+            <input type="text" id="depositOrderNo" class="form-input form-input-sm" placeholder="输入订单号">
+          </div>
+          <div>
+            <label class="text-xs text-gray-500 mb-1 block">会员账号</label>
+            <input type="text" id="depositUsername" class="form-input form-input-sm" placeholder="输入会员账号">
+          </div>
+          <div>
+            <label class="text-xs text-gray-500 mb-1 block">状态</label>
+            <select id="depositStatus" class="form-select form-input-sm">
+              <option value="">全部状态</option>
+              <option value="0">待审核</option>
+              <option value="1">已完成</option>
+              <option value="2">已拒绝</option>
+            </select>
+          </div>
+          <div>
+            <label class="text-xs text-gray-500 mb-1 block">会员ID</label>
+            <input type="number" id="depositPlayerId" class="form-input form-input-sm" placeholder="输入会员ID">
+          </div>
+        </div>
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <div>
+            <label class="text-xs text-gray-500 mb-1 block">开始日期</label>
+            <input type="date" id="depositDateFrom" class="form-input form-input-sm" value="${weekAgo}">
+          </div>
+          <div>
+            <label class="text-xs text-gray-500 mb-1 block">结束日期</label>
+            <input type="date" id="depositDateTo" class="form-input form-input-sm" value="${today}">
+          </div>
+          <div class="col-span-2 flex items-end gap-2">
+            <button type="submit" class="btn btn-primary btn-sm">
+              <i class="fas fa-search mr-1"></i>查询
+            </button>
+            <button type="button" onclick="resetDepositsFilter()" class="btn btn-secondary btn-sm">
+              <i class="fas fa-undo mr-1"></i>重置
+            </button>
+          </div>
+        </div>
+      </form>
+    </div>
+    
+    <!-- 数据表格 -->
+    <div id="depositsTableContainer">
+      ${showLoading()}
     </div>
   `
+  
+  // 初始加载
+  loadDepositsData()
 }
 
-// 渲染提款列表
-function renderWithdrawalsList(container, data) {
-  container.innerHTML = `
-    <div class="data-table-wrapper">
-      <table class="data-table">
-        <thead><tr><th>订单号</th><th>玩家</th><th class="text-right">金额</th><th>银行</th><th>状态</th><th>时间</th></tr></thead>
-        <tbody>
-          ${data.length === 0 ? `<tr><td colspan="6">${showEmpty('inbox', '暂无提款记录')}</td></tr>` :
-            data.map(w => `
-              <tr>
-                <td class="font-mono text-sm">${w.order_no}</td>
-                <td class="font-semibold">${escapeHtml(w.username || '-')}</td>
-                <td class="text-right font-mono text-red-600 font-semibold">${formatCurrency(w.amount)}</td>
-                <td>${escapeHtml(w.bank_name || '-')}</td>
-                <td>${getStatusBadge(w.status, 'withdrawal')}</td>
-                <td class="text-gray-500 text-sm">${formatShortDate(w.created_at)}</td>
-              </tr>
-            `).join('')}
-        </tbody>
-      </table>
-    </div>
-  `
+// 加载存款数据
+async function loadDepositsData(params = {}) {
+  const container = document.getElementById('depositsTableContainer')
+  if (!container) return
+  
+  try {
+    const data = await API.get('/deposits', { limit: 100, ...params })
+    container.innerHTML = `
+      <div class="data-table-wrapper">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>订单号</th>
+              <th>会员ID</th>
+              <th>玩家账号</th>
+              <th class="text-right">金额</th>
+              <th>支付方式</th>
+              <th class="text-center">状态</th>
+              <th>申请时间</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${data.data.length === 0 ? `<tr><td colspan="7">${showEmpty('inbox', '暂无存款记录')}</td></tr>` :
+              data.data.map(d => `
+                <tr>
+                  <td class="font-mono text-sm">${d.order_no}</td>
+                  <td class="font-mono text-gray-500">${d.player_id || '-'}</td>
+                  <td class="font-semibold">${escapeHtml(d.username || '-')}</td>
+                  <td class="text-right font-mono text-emerald-600 font-semibold text-lg">${formatCurrency(d.amount)}</td>
+                  <td>${escapeHtml(d.payment_method || '-')}</td>
+                  <td class="text-center">${getStatusBadge(d.status, 'deposit')}</td>
+                  <td class="text-gray-500 text-sm">${formatShortDate(d.created_at)}</td>
+                </tr>
+              `).join('')}
+          </tbody>
+        </table>
+      </div>
+    `
+  } catch (error) {
+    container.innerHTML = showEmpty('exclamation-circle', '加载失败')
+  }
 }
 
-// 渲染资金流水列表
-function renderTransactionsList(container, data) {
+// 搜索存款
+function searchDeposits(e) {
+  e.preventDefault()
+  const params = {}
+  
+  const orderNo = document.getElementById('depositOrderNo')?.value
+  const username = document.getElementById('depositUsername')?.value
+  const status = document.getElementById('depositStatus')?.value
+  const playerId = document.getElementById('depositPlayerId')?.value
+  const dateFrom = document.getElementById('depositDateFrom')?.value
+  const dateTo = document.getElementById('depositDateTo')?.value
+  
+  if (orderNo) params.order_no = orderNo
+  if (username) params.username = username
+  if (status) params.status = status
+  if (playerId) params.player_id = playerId
+  if (dateFrom) params.date_from = dateFrom
+  if (dateTo) params.date_to = dateTo
+  
+  loadDepositsData(params)
+}
+
+// 重置存款筛选
+function resetDepositsFilter() {
+  document.getElementById('depositsSearchForm')?.reset()
+  const today = new Date().toISOString().split('T')[0]
+  const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
+  document.getElementById('depositDateFrom').value = weekAgo
+  document.getElementById('depositDateTo').value = today
+  loadDepositsData()
+}
+
+// 渲染提款查询页面
+async function renderWithdrawalsQuery(container) {
+  const today = new Date().toISOString().split('T')[0]
+  const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
+  
   container.innerHTML = `
-    <div class="data-table-wrapper">
-      <table class="data-table">
-        <thead><tr><th>订单号</th><th>玩家</th><th>类型</th><th class="text-right">金额</th><th class="text-right">变动后余额</th><th>时间</th></tr></thead>
-        <tbody>
-          ${data.length === 0 ? `<tr><td colspan="6">${showEmpty('inbox', '暂无流水记录')}</td></tr>` :
-            data.map(t => `
-              <tr>
-                <td class="font-mono text-sm">${t.order_no || '-'}</td>
-                <td class="font-semibold">${escapeHtml(t.username || '-')}</td>
-                <td>${getTransactionTypeBadge(t.transaction_type)}</td>
-                <td class="text-right font-mono font-semibold ${t.amount >= 0 ? 'text-emerald-600' : 'text-red-600'}">${t.amount >= 0 ? '+' : ''}${formatCurrency(t.amount)}</td>
-                <td class="text-right font-mono">${formatCurrency(t.balance_after)}</td>
-                <td class="text-gray-500 text-sm">${formatShortDate(t.created_at)}</td>
-              </tr>
-            `).join('')}
-        </tbody>
-      </table>
+    <!-- 查询表单 -->
+    <div class="bg-gray-50 p-4 rounded-lg mb-4">
+      <form id="withdrawalsSearchForm" onsubmit="searchWithdrawals(event)">
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+          <div>
+            <label class="text-xs text-gray-500 mb-1 block">订单号</label>
+            <input type="text" id="withdrawalOrderNo" class="form-input form-input-sm" placeholder="输入订单号">
+          </div>
+          <div>
+            <label class="text-xs text-gray-500 mb-1 block">会员账号</label>
+            <input type="text" id="withdrawalUsername" class="form-input form-input-sm" placeholder="输入会员账号">
+          </div>
+          <div>
+            <label class="text-xs text-gray-500 mb-1 block">状态</label>
+            <select id="withdrawalStatus" class="form-select form-input-sm">
+              <option value="">全部状态</option>
+              <option value="0">待审核</option>
+              <option value="1">已批准</option>
+              <option value="2">已拒绝</option>
+              <option value="3">处理中</option>
+              <option value="4">已完成</option>
+            </select>
+          </div>
+          <div>
+            <label class="text-xs text-gray-500 mb-1 block">会员ID</label>
+            <input type="number" id="withdrawalPlayerId" class="form-input form-input-sm" placeholder="输入会员ID">
+          </div>
+        </div>
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <div>
+            <label class="text-xs text-gray-500 mb-1 block">开始日期</label>
+            <input type="date" id="withdrawalDateFrom" class="form-input form-input-sm" value="${weekAgo}">
+          </div>
+          <div>
+            <label class="text-xs text-gray-500 mb-1 block">结束日期</label>
+            <input type="date" id="withdrawalDateTo" class="form-input form-input-sm" value="${today}">
+          </div>
+          <div class="col-span-2 flex items-end gap-2">
+            <button type="submit" class="btn btn-primary btn-sm">
+              <i class="fas fa-search mr-1"></i>查询
+            </button>
+            <button type="button" onclick="resetWithdrawalsFilter()" class="btn btn-secondary btn-sm">
+              <i class="fas fa-undo mr-1"></i>重置
+            </button>
+          </div>
+        </div>
+      </form>
+    </div>
+    
+    <!-- 数据表格 -->
+    <div id="withdrawalsTableContainer">
+      ${showLoading()}
     </div>
   `
+  
+  loadWithdrawalsData()
+}
+
+// 加载提款数据
+async function loadWithdrawalsData(params = {}) {
+  const container = document.getElementById('withdrawalsTableContainer')
+  if (!container) return
+  
+  try {
+    const data = await API.get('/withdrawals', { limit: 100, ...params })
+    container.innerHTML = `
+      <div class="data-table-wrapper">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>订单号</th>
+              <th>会员ID</th>
+              <th>玩家账号</th>
+              <th class="text-right">金额</th>
+              <th>银行</th>
+              <th>账号</th>
+              <th class="text-center">状态</th>
+              <th>申请时间</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${data.data.length === 0 ? `<tr><td colspan="8">${showEmpty('inbox', '暂无提款记录')}</td></tr>` :
+              data.data.map(w => `
+                <tr>
+                  <td class="font-mono text-sm">${w.order_no}</td>
+                  <td class="font-mono text-gray-500">${w.player_id || '-'}</td>
+                  <td class="font-semibold">${escapeHtml(w.username || '-')}</td>
+                  <td class="text-right font-mono text-red-600 font-semibold text-lg">${formatCurrency(w.amount)}</td>
+                  <td>${escapeHtml(w.bank_name || '-')}</td>
+                  <td class="font-mono text-sm">${escapeHtml(w.bank_account || '-')}</td>
+                  <td class="text-center">${getStatusBadge(w.status, 'withdrawal')}</td>
+                  <td class="text-gray-500 text-sm">${formatShortDate(w.created_at)}</td>
+                </tr>
+              `).join('')}
+          </tbody>
+        </table>
+      </div>
+    `
+  } catch (error) {
+    container.innerHTML = showEmpty('exclamation-circle', '加载失败')
+  }
+}
+
+// 搜索提款
+function searchWithdrawals(e) {
+  e.preventDefault()
+  const params = {}
+  
+  const orderNo = document.getElementById('withdrawalOrderNo')?.value
+  const username = document.getElementById('withdrawalUsername')?.value
+  const status = document.getElementById('withdrawalStatus')?.value
+  const playerId = document.getElementById('withdrawalPlayerId')?.value
+  const dateFrom = document.getElementById('withdrawalDateFrom')?.value
+  const dateTo = document.getElementById('withdrawalDateTo')?.value
+  
+  if (orderNo) params.order_no = orderNo
+  if (username) params.username = username
+  if (status) params.status = status
+  if (playerId) params.player_id = playerId
+  if (dateFrom) params.date_from = dateFrom
+  if (dateTo) params.date_to = dateTo
+  
+  loadWithdrawalsData(params)
+}
+
+// 重置提款筛选
+function resetWithdrawalsFilter() {
+  document.getElementById('withdrawalsSearchForm')?.reset()
+  const today = new Date().toISOString().split('T')[0]
+  const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
+  document.getElementById('withdrawalDateFrom').value = weekAgo
+  document.getElementById('withdrawalDateTo').value = today
+  loadWithdrawalsData()
+}
+
+// 渲染资金流水查询页面
+async function renderTransactionsQuery(container) {
+  const today = new Date().toISOString().split('T')[0]
+  const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
+  
+  container.innerHTML = `
+    <!-- 查询表单 -->
+    <div class="bg-gray-50 p-4 rounded-lg mb-4">
+      <form id="transactionsSearchForm" onsubmit="searchTransactions(event)">
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+          <div>
+            <label class="text-xs text-gray-500 mb-1 block">订单号</label>
+            <input type="text" id="transactionOrderNo" class="form-input form-input-sm" placeholder="输入订单号">
+          </div>
+          <div>
+            <label class="text-xs text-gray-500 mb-1 block">会员账号</label>
+            <input type="text" id="transactionUsername" class="form-input form-input-sm" placeholder="输入会员账号">
+          </div>
+          <div>
+            <label class="text-xs text-gray-500 mb-1 block">流水类型</label>
+            <select id="transactionType" class="form-select form-input-sm">
+              <option value="">全部类型</option>
+              <option value="deposit">存款</option>
+              <option value="withdrawal">提款</option>
+              <option value="bet">投注</option>
+              <option value="payout">派彩</option>
+              <option value="commission">洗码</option>
+              <option value="bonus">红利</option>
+              <option value="adjustment">调账</option>
+              <option value="transfer_in">转入</option>
+              <option value="transfer_out">转出</option>
+            </select>
+          </div>
+          <div>
+            <label class="text-xs text-gray-500 mb-1 block">会员ID</label>
+            <input type="number" id="transactionPlayerId" class="form-input form-input-sm" placeholder="输入会员ID">
+          </div>
+        </div>
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <div>
+            <label class="text-xs text-gray-500 mb-1 block">开始日期</label>
+            <input type="date" id="transactionDateFrom" class="form-input form-input-sm" value="${weekAgo}">
+          </div>
+          <div>
+            <label class="text-xs text-gray-500 mb-1 block">结束日期</label>
+            <input type="date" id="transactionDateTo" class="form-input form-input-sm" value="${today}">
+          </div>
+          <div class="col-span-2 flex items-end gap-2">
+            <button type="submit" class="btn btn-primary btn-sm">
+              <i class="fas fa-search mr-1"></i>查询
+            </button>
+            <button type="button" onclick="resetTransactionsFilter()" class="btn btn-secondary btn-sm">
+              <i class="fas fa-undo mr-1"></i>重置
+            </button>
+          </div>
+        </div>
+      </form>
+    </div>
+    
+    <!-- 数据表格 -->
+    <div id="transactionsTableContainer">
+      ${showLoading()}
+    </div>
+  `
+  
+  loadTransactionsData()
+}
+
+// 加载资金流水数据
+async function loadTransactionsData(params = {}) {
+  const container = document.getElementById('transactionsTableContainer')
+  if (!container) return
+  
+  try {
+    const data = await API.get('/transactions', { limit: 100, ...params })
+    container.innerHTML = `
+      <div class="data-table-wrapper">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>订单号</th>
+              <th>会员ID</th>
+              <th>玩家账号</th>
+              <th>类型</th>
+              <th class="text-right">金额变动</th>
+              <th class="text-right">变动后余额</th>
+              <th>时间</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${data.data.length === 0 ? `<tr><td colspan="7">${showEmpty('inbox', '暂无流水记录')}</td></tr>` :
+              data.data.map(t => `
+                <tr>
+                  <td class="font-mono text-sm">${t.order_no || '-'}</td>
+                  <td class="font-mono text-gray-500">${t.player_id || '-'}</td>
+                  <td class="font-semibold">${escapeHtml(t.username || '-')}</td>
+                  <td>${getTransactionTypeBadge(t.transaction_type)}</td>
+                  <td class="text-right font-mono font-semibold text-lg ${t.amount >= 0 ? 'text-emerald-600' : 'text-red-600'}">${t.amount >= 0 ? '+' : ''}${formatCurrency(t.amount)}</td>
+                  <td class="text-right font-mono">${formatCurrency(t.balance_after)}</td>
+                  <td class="text-gray-500 text-sm">${formatShortDate(t.created_at)}</td>
+                </tr>
+              `).join('')}
+          </tbody>
+        </table>
+      </div>
+    `
+  } catch (error) {
+    container.innerHTML = showEmpty('exclamation-circle', '加载失败')
+  }
+}
+
+// 搜索资金流水
+function searchTransactions(e) {
+  e.preventDefault()
+  const params = {}
+  
+  const orderNo = document.getElementById('transactionOrderNo')?.value
+  const username = document.getElementById('transactionUsername')?.value
+  const type = document.getElementById('transactionType')?.value
+  const playerId = document.getElementById('transactionPlayerId')?.value
+  const dateFrom = document.getElementById('transactionDateFrom')?.value
+  const dateTo = document.getElementById('transactionDateTo')?.value
+  
+  if (orderNo) params.order_no = orderNo
+  if (username) params.username = username
+  if (type) params.type = type
+  if (playerId) params.player_id = playerId
+  if (dateFrom) params.dateFrom = dateFrom
+  if (dateTo) params.dateTo = dateTo
+  
+  loadTransactionsData(params)
+}
+
+// 重置资金流水筛选
+function resetTransactionsFilter() {
+  document.getElementById('transactionsSearchForm')?.reset()
+  const today = new Date().toISOString().split('T')[0]
+  const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
+  document.getElementById('transactionDateFrom').value = weekAgo
+  document.getElementById('transactionDateTo').value = today
+  loadTransactionsData()
 }
 
 function getTransactionTypeBadge(type) {
