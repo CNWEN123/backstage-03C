@@ -1279,7 +1279,10 @@ app.get('/api/agents', async (c) => {
   
   try {
     let query = `
-      SELECT a.*, 
+      SELECT a.id, a.username, a.agent_level, a.parent_id, a.agent_path, a.balance,
+             a.profit_share, a.commission_rate, a.status, a.phone, a.email,
+             a.share_code, a.custom_domain, a.domain_status,
+             a.created_at, a.updated_at,
              (SELECT COUNT(*) FROM players WHERE agent_id = a.id) as player_count,
              (SELECT COUNT(*) FROM agents WHERE parent_id = a.id) as sub_agent_count
       FROM agents a
@@ -1365,7 +1368,7 @@ app.get('/api/agents/:id', async (c) => {
 app.post('/api/agents', async (c) => {
   const { DB } = c.env
   const body = await c.req.json()
-  const { username, password, agent_level, parent_id, profit_share, commission_rate } = body
+  const { username, password, agent_level, parent_id, profit_share, commission_rate, custom_domain } = body
   
   // 输入验证
   if (!username || typeof username !== 'string' || username.length < 3 || username.length > 32) {
@@ -1378,11 +1381,24 @@ app.post('/api/agents', async (c) => {
     return c.json({ success: false, error: '代理账号只能包含字母、数字和下划线' }, 400)
   }
   
+  // 验证域名格式
+  if (custom_domain && !/^[a-zA-Z0-9][a-zA-Z0-9.-]*\.[a-zA-Z]{2,}$/.test(custom_domain)) {
+    return c.json({ success: false, error: '域名格式不正确' }, 400)
+  }
+  
   try {
     // 检查用户名
     const existing = await DB.prepare('SELECT id FROM agents WHERE username = ?').bind(username).first()
     if (existing) {
       return c.json({ success: false, error: '代理账号已存在' }, 400)
+    }
+    
+    // 检查域名是否已被使用
+    if (custom_domain) {
+      const domainExists = await DB.prepare('SELECT id FROM agents WHERE custom_domain = ?').bind(custom_domain).first()
+      if (domainExists) {
+        return c.json({ success: false, error: '该域名已被其他代理绑定' }, 400)
+      }
     }
     
     // 计算代理路径
@@ -1400,16 +1416,20 @@ app.post('/api/agents', async (c) => {
     // 密码哈希处理
     const passwordHash = await hashPassword(password)
     
+    // 生成分享码: AG + 6位ID + 4位随机字符
+    const randomPart = crypto.randomUUID().substring(0, 4).toUpperCase()
+    
     const result = await DB.prepare(`
-      INSERT INTO agents (username, password_hash, agent_level, parent_id, agent_path, profit_share, commission_rate)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).bind(username, passwordHash, agent_level || 3, parent_id || null, agentPath, profit_share || 0, commission_rate || 0).run()
+      INSERT INTO agents (username, password_hash, agent_level, parent_id, agent_path, profit_share, commission_rate, custom_domain)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).bind(username, passwordHash, agent_level || 3, parent_id || null, agentPath, profit_share || 0, commission_rate || 0, custom_domain || null).run()
     
-    // 更新路径包含自己的ID
+    // 更新路径和分享码
     const newId = result.meta.last_row_id
-    await DB.prepare(`UPDATE agents SET agent_path = ? WHERE id = ?`).bind(`${agentPath}${newId}/`, newId).run()
+    const shareCode = `AG${String(newId).padStart(6, '0')}${randomPart}`
+    await DB.prepare(`UPDATE agents SET agent_path = ?, share_code = ? WHERE id = ?`).bind(`${agentPath}${newId}/`, shareCode, newId).run()
     
-    return c.json({ success: true, id: newId, message: '代理创建成功' })
+    return c.json({ success: true, id: newId, share_code: shareCode, message: '代理创建成功' })
   } catch (error) {
     return c.json({ success: false, error: (error as Error).message }, 500)
   }
@@ -1422,6 +1442,18 @@ app.put('/api/agents/:id', async (c) => {
   const body = await c.req.json()
   
   try {
+    // 如果要更新域名，检查是否已被其他代理使用
+    if (body.custom_domain !== undefined && body.custom_domain) {
+      // 验证域名格式
+      if (!/^[a-zA-Z0-9][a-zA-Z0-9.-]*\.[a-zA-Z]{2,}$/.test(body.custom_domain)) {
+        return c.json({ success: false, error: '域名格式不正确' }, 400)
+      }
+      const domainExists = await DB.prepare('SELECT id FROM agents WHERE custom_domain = ? AND id != ?').bind(body.custom_domain, id).first()
+      if (domainExists) {
+        return c.json({ success: false, error: '该域名已被其他代理绑定' }, 400)
+      }
+    }
+    
     // 动态构建更新语句,只更新提供的字段
     const updates: string[] = []
     const values: (string | number | null)[] = []
@@ -1433,13 +1465,20 @@ app.put('/api/agents/:id', async (c) => {
       status: 'status',
       phone: 'phone',
       email: 'email',
-      remark: 'remark'
+      remark: 'remark',
+      custom_domain: 'custom_domain',
+      domain_status: 'domain_status'
     }
     
     for (const [key, dbField] of Object.entries(fieldMap)) {
       if (body[key] !== undefined) {
         updates.push(`${dbField} = ?`)
-        values.push(body[key])
+        // 空字符串域名转为null
+        if (key === 'custom_domain' && body[key] === '') {
+          values.push(null)
+        } else {
+          values.push(body[key])
+        }
       }
     }
     
@@ -1455,6 +1494,122 @@ app.put('/api/agents/:id', async (c) => {
     `).bind(...values).run()
     
     return c.json({ success: true, message: '代理信息更新成功' })
+  } catch (error) {
+    return c.json({ success: false, error: (error as Error).message }, 500)
+  }
+})
+
+// 重新生成代理分享码
+app.post('/api/agents/:id/regenerate-share-code', async (c) => {
+  const { DB } = c.env
+  const id = c.req.param('id')
+  
+  try {
+    const agent = await DB.prepare('SELECT id FROM agents WHERE id = ?').bind(id).first()
+    if (!agent) {
+      return c.json({ success: false, error: '代理不存在' }, 404)
+    }
+    
+    // 生成新分享码
+    const randomPart = crypto.randomUUID().substring(0, 4).toUpperCase()
+    const shareCode = `AG${String(id).padStart(6, '0')}${randomPart}`
+    
+    await DB.prepare('UPDATE agents SET share_code = ? WHERE id = ?').bind(shareCode, id).run()
+    
+    return c.json({ success: true, share_code: shareCode, message: '分享码已重新生成' })
+  } catch (error) {
+    return c.json({ success: false, error: (error as Error).message }, 500)
+  }
+})
+
+// 获取代理分享链接信息
+app.get('/api/agents/:id/share-info', async (c) => {
+  const { DB } = c.env
+  const id = c.req.param('id')
+  
+  try {
+    const agent = await DB.prepare(`
+      SELECT id, username, share_code, custom_domain, domain_status
+      FROM agents WHERE id = ?
+    `).bind(id).first()
+    
+    if (!agent) {
+      return c.json({ success: false, error: '代理不存在' }, 404)
+    }
+    
+    // 如果没有分享码，自动生成一个
+    let shareCode = agent.share_code
+    if (!shareCode) {
+      const randomPart = crypto.randomUUID().substring(0, 4).toUpperCase()
+      shareCode = `AG${String(id).padStart(6, '0')}${randomPart}`
+      await DB.prepare('UPDATE agents SET share_code = ? WHERE id = ?').bind(shareCode, id).run()
+    }
+    
+    // 获取该代理通过分享链接注册的统计
+    const stats = await DB.prepare(`
+      SELECT COUNT(*) as total_registrations,
+             COUNT(CASE WHEN DATE(created_at) = DATE('now') THEN 1 END) as today_registrations,
+             COUNT(CASE WHEN DATE(created_at) >= DATE('now', '-7 days') THEN 1 END) as week_registrations
+      FROM agent_share_stats WHERE agent_id = ?
+    `).bind(id).first()
+    
+    return c.json({
+      success: true,
+      data: {
+        agent_id: agent.id,
+        username: agent.username,
+        share_code: shareCode,
+        custom_domain: agent.custom_domain,
+        domain_status: agent.domain_status,
+        stats: stats || { total_registrations: 0, today_registrations: 0, week_registrations: 0 }
+      }
+    })
+  } catch (error) {
+    // 如果表不存在，返回基础数据
+    const agent = await c.env.DB.prepare(`
+      SELECT id, username, share_code, custom_domain, domain_status
+      FROM agents WHERE id = ?
+    `).bind(id).first()
+    
+    if (!agent) {
+      return c.json({ success: false, error: '代理不存在' }, 404)
+    }
+    
+    return c.json({
+      success: true,
+      data: {
+        agent_id: agent.id,
+        username: agent.username,
+        share_code: agent.share_code || `AG${String(id).padStart(6, '0')}XXXX`,
+        custom_domain: agent.custom_domain,
+        domain_status: agent.domain_status || 0,
+        stats: { total_registrations: 0, today_registrations: 0, week_registrations: 0 }
+      }
+    })
+  }
+})
+
+// 根据分享码查询代理（用于注册页面）
+app.get('/api/share/:code', async (c) => {
+  const { DB } = c.env
+  const code = c.req.param('code')
+  
+  try {
+    const agent = await DB.prepare(`
+      SELECT id, username, agent_level FROM agents WHERE share_code = ? AND status = 1
+    `).bind(code).first()
+    
+    if (!agent) {
+      return c.json({ success: false, error: '无效的分享码' }, 404)
+    }
+    
+    return c.json({
+      success: true,
+      data: {
+        agent_id: agent.id,
+        agent_name: agent.username
+      }
+    })
   } catch (error) {
     return c.json({ success: false, error: (error as Error).message }, 500)
   }

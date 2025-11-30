@@ -895,12 +895,12 @@ const Modules = {
           <!-- 头部 -->
           <div class="card-header">
             <div class="card-header-title">
-              <h3>代理层级管理</h3>
+              <h3>股东/代理管理</h3>
               <p>金字塔代理体系：股东 → 总代 → 代理 → 玩家</p>
             </div>
             <div class="card-header-actions">
               <button onclick="showAddAgentModal()" class="btn btn-success btn-sm">
-                <i class="fas fa-plus"></i> 新增代理
+                <i class="fas fa-plus"></i> 新增股东/代理
               </button>
             </div>
           </div>
@@ -910,14 +910,14 @@ const Modules = {
             <table class="data-table">
               <thead>
                 <tr>
-                  <th>代理ID</th>
+                  <th>ID</th>
                   <th>代理账号</th>
                   <th class="text-center">层级</th>
-                  <th class="text-right">占成比例</th>
-                  <th class="text-right">洗码率</th>
-                  <th class="text-right">余额</th>
-                  <th class="text-center">下级代理</th>
-                  <th class="text-center">玩家数</th>
+                  <th>分享码</th>
+                  <th>专属域名</th>
+                  <th class="text-right">占成</th>
+                  <th class="text-center">下级</th>
+                  <th class="text-center">玩家</th>
                   <th class="text-center">状态</th>
                   <th class="text-center">操作</th>
                 </tr>
@@ -928,16 +928,25 @@ const Modules = {
                     <td class="font-mono text-gray-500">${escapeHtml(String(agent.id))}</td>
                     <td class="font-semibold">${escapeHtml(agent.username)}</td>
                     <td class="text-center">${getLevelBadge(agent.agent_level)}</td>
+                    <td>
+                      ${agent.share_code ? 
+                        `<span class="font-mono text-xs bg-slate-700 px-2 py-1 rounded cursor-pointer" onclick="showAgentShareLink(${agent.id})" title="点击查看分享链接">${agent.share_code}</span>` 
+                        : '<span class="text-gray-400 text-xs">-</span>'}
+                    </td>
+                    <td>
+                      ${agent.custom_domain ? 
+                        `<span class="font-mono text-xs text-emerald-400" title="${escapeHtml(agent.custom_domain)}">${escapeHtml(agent.custom_domain.length > 20 ? agent.custom_domain.substring(0, 20) + '...' : agent.custom_domain)}</span>` 
+                        : '<span class="text-gray-400 text-xs">未绑定</span>'}
+                    </td>
                     <td class="text-right font-semibold text-blue-600">${agent.profit_share}%</td>
-                    <td class="text-right font-mono text-indigo-600">${(agent.commission_rate * 100).toFixed(2)}%</td>
-                    <td class="text-right font-mono font-semibold text-emerald-600">${formatCurrency(agent.balance)}</td>
                     <td class="text-center">${agent.sub_agent_count || 0}</td>
                     <td class="text-center">${agent.player_count || 0}</td>
                     <td class="text-center">${getStatusBadge(agent.status, 'player')}</td>
                     <td class="text-center">
-                      <div class="flex items-center justify-center gap-2">
-                        <button onclick="viewAgentDetail(${agent.id})" class="btn btn-primary btn-xs">详情</button>
-                        <button onclick="editAgent(${agent.id})" class="btn btn-secondary btn-xs">编辑</button>
+                      <div class="flex items-center justify-center gap-1">
+                        <button onclick="viewAgentDetail(${agent.id})" class="btn btn-primary btn-xs" title="详情"><i class="fas fa-eye"></i></button>
+                        <button onclick="editAgent(${agent.id})" class="btn btn-secondary btn-xs" title="编辑"><i class="fas fa-edit"></i></button>
+                        <button onclick="showAgentShareLink(${agent.id})" class="btn btn-info btn-xs" title="分享"><i class="fas fa-share-alt"></i></button>
                       </div>
                     </td>
                   </tr>
@@ -2543,7 +2552,7 @@ function showAddAgentModal() {
       <div class="grid grid-2 gap-md">
         <div class="form-group">
           <label class="form-label">代理账号 *</label>
-          <input type="text" id="newAgentUsername" class="form-input" required minlength="3" maxlength="32" pattern="[a-zA-Z0-9_]+">
+          <input type="text" id="newAgentUsername" class="form-input" required minlength="3" maxlength="32" pattern="[a-zA-Z0-9_]+" placeholder="字母、数字、下划线">
         </div>
         <div class="form-group">
           <label class="form-label">密码 *</label>
@@ -2569,6 +2578,14 @@ function showAddAgentModal() {
           <label class="form-label">洗码率(%)</label>
           <input type="number" id="newAgentCommissionRate" class="form-input" step="0.0001" min="0" max="5" value="0">
         </div>
+        <div class="form-group col-span-2">
+          <label class="form-label">
+            <i class="fas fa-globe mr-1"></i>专属域名
+            <span class="text-gray-400 text-sm ml-1">(可选)</span>
+          </label>
+          <input type="text" id="newAgentCustomDomain" class="form-input" placeholder="例如: agent.example.com">
+          <p class="text-gray-400 text-xs mt-1">绑定专属域名后，用户可通过该域名访问注册页面自动关联到此代理</p>
+        </div>
       </div>
       <div class="flex gap-2 mt-6">
         <button type="submit" class="btn btn-primary flex-1">创建代理</button>
@@ -2576,25 +2593,27 @@ function showAddAgentModal() {
       </div>
     </form>
   `
-  showModal('新增代理', content, { width: '550px' })
+  showModal('新增股东/代理', content, { width: '600px' })
 }
 
 async function submitAddAgent(e) {
   e.preventDefault()
   try {
-    await API.post('/agents', {
+    const customDomain = document.getElementById('newAgentCustomDomain').value.trim()
+    const result = await API.post('/agents', {
       username: document.getElementById('newAgentUsername').value,
       password: document.getElementById('newAgentPassword').value,
       agent_level: parseInt(document.getElementById('newAgentLevel').value),
       parent_id: document.getElementById('newAgentParentId').value || null,
       profit_share: parseFloat(document.getElementById('newAgentProfitShare').value),
-      commission_rate: parseFloat(document.getElementById('newAgentCommissionRate').value) / 100
+      commission_rate: parseFloat(document.getElementById('newAgentCommissionRate').value) / 100,
+      custom_domain: customDomain || null
     })
-    showNotification('代理创建成功', 'success')
+    showNotification(`代理创建成功，分享码: ${result.share_code}`, 'success')
     closeAllModals()
     loadModule('agents')
   } catch (error) {
-    showNotification('创建失败', 'danger')
+    showNotification(error.response?.data?.error || '创建失败', 'danger')
   }
 }
 
@@ -2604,6 +2623,9 @@ async function viewAgentDetail(id) {
     const agent = data.data
     
     const levelNames = { 1: '股东', 2: '总代', 3: '代理' }
+    const domainStatusText = { 0: '未验证', 1: '已验证', 2: '验证失败' }
+    const domainStatusClass = { 0: 'warning', 1: 'success', 2: 'danger' }
+    
     const content = `
       <div class="grid grid-2 gap-lg mb-6">
         <div>
@@ -2627,6 +2649,26 @@ async function viewAgentDetail(id) {
           </div>
         </div>
       </div>
+      
+      <div class="bg-slate-700/50 rounded-lg p-4 mb-4">
+        <h4 class="font-semibold mb-3"><i class="fas fa-share-alt mr-2 text-blue-400"></i>分享与域名</h4>
+        <div class="space-y-sm">
+          <div class="flex justify-between items-center">
+            <span class="text-gray-500">分享码</span>
+            <span class="font-mono bg-slate-600 px-2 py-1 rounded">${agent.share_code || '未生成'}</span>
+          </div>
+          <div class="flex justify-between items-center">
+            <span class="text-gray-500">专属域名</span>
+            <span>
+              ${agent.custom_domain ? 
+                `<span class="font-mono">${escapeHtml(agent.custom_domain)}</span>
+                 <span class="badge badge-${domainStatusClass[agent.domain_status || 0]} ml-2">${domainStatusText[agent.domain_status || 0]}</span>` 
+                : '<span class="text-gray-400">未绑定</span>'}
+            </span>
+          </div>
+        </div>
+      </div>
+      
       ${agent.subAgents && agent.subAgents.length > 0 ? `
         <div class="mb-4">
           <h4 class="font-semibold mb-2">下级代理</h4>
@@ -2637,6 +2679,7 @@ async function viewAgentDetail(id) {
       ` : ''}
       <div class="flex gap-2">
         <button onclick="editAgent(${agent.id})" class="btn btn-primary btn-sm"><i class="fas fa-edit mr-1"></i>编辑</button>
+        <button onclick="showAgentShareLink(${agent.id})" class="btn btn-info btn-sm"><i class="fas fa-share-alt mr-1"></i>分享链接</button>
         <button onclick="closeAllModals()" class="btn btn-secondary btn-sm">关闭</button>
       </div>
     `
@@ -2650,6 +2693,9 @@ async function editAgent(id) {
   try {
     const data = await API.get(`/agents/${id}`)
     const agent = data.data
+    const levelNames = { 1: '股东', 2: '总代', 3: '代理' }
+    const domainStatusText = { 0: '未验证', 1: '已验证', 2: '验证失败' }
+    const domainStatusClass = { 0: 'warning', 1: 'success', 2: 'danger' }
     
     const content = `
       <form onsubmit="submitEditAgent(event, ${id})">
@@ -2657,6 +2703,10 @@ async function editAgent(id) {
           <div class="form-group">
             <label class="form-label">代理账号</label>
             <input type="text" class="form-input" value="${escapeHtml(agent.username)}" disabled>
+          </div>
+          <div class="form-group">
+            <label class="form-label">级别</label>
+            <input type="text" class="form-input" value="${levelNames[agent.agent_level] || '代理'}" disabled>
           </div>
           <div class="form-group">
             <label class="form-label">状态</label>
@@ -2673,15 +2723,35 @@ async function editAgent(id) {
             <label class="form-label">洗码率(%)</label>
             <input type="number" id="editAgentCommissionRate" class="form-input" step="0.01" min="0" max="5" value="${((agent.commission_rate || 0) * 100).toFixed(2)}">
           </div>
+          <div class="form-group">
+            <label class="form-label">分享码</label>
+            <div class="flex gap-2">
+              <input type="text" class="form-input flex-1" value="${agent.share_code || '未生成'}" disabled>
+              <button type="button" onclick="regenerateShareCode(${id})" class="btn btn-secondary btn-sm" title="重新生成">
+                <i class="fas fa-sync-alt"></i>
+              </button>
+            </div>
+          </div>
+          <div class="form-group col-span-2">
+            <label class="form-label">
+              <i class="fas fa-globe mr-1"></i>专属域名
+              ${agent.custom_domain ? `<span class="badge badge-${domainStatusClass[agent.domain_status || 0]} ml-2">${domainStatusText[agent.domain_status || 0]}</span>` : ''}
+            </label>
+            <input type="text" id="editAgentCustomDomain" class="form-input" placeholder="例如: agent.example.com" value="${escapeHtml(agent.custom_domain || '')}">
+            <p class="text-gray-400 text-xs mt-1">绑定专属域名后，用户可通过该域名访问注册页面自动关联到此代理</p>
+          </div>
         </div>
         <div class="flex gap-2 mt-6">
           <button type="submit" class="btn btn-primary flex-1">保存修改</button>
+          <button type="button" onclick="showAgentShareLink(${id})" class="btn btn-info flex-1">
+            <i class="fas fa-share-alt mr-1"></i>分享链接
+          </button>
           <button type="button" onclick="closeAllModals()" class="btn btn-secondary flex-1">取消</button>
         </div>
       </form>
     `
     closeAllModals()
-    showModal(`编辑代理 - ${escapeHtml(agent.username)}`, content, { width: '500px' })
+    showModal(`编辑股东/代理 - ${escapeHtml(agent.username)}`, content, { width: '600px' })
   } catch (error) {
     showNotification('获取代理信息失败', 'danger')
   }
@@ -2690,17 +2760,110 @@ async function editAgent(id) {
 async function submitEditAgent(e, id) {
   e.preventDefault()
   try {
+    const customDomain = document.getElementById('editAgentCustomDomain').value.trim()
     await API.put(`/agents/${id}`, {
       profit_share: parseFloat(document.getElementById('editAgentProfitShare').value),
       commission_rate: parseFloat(document.getElementById('editAgentCommissionRate').value) / 100,
-      status: parseInt(document.getElementById('editAgentStatus').value)
+      status: parseInt(document.getElementById('editAgentStatus').value),
+      custom_domain: customDomain || ''
     })
     showNotification('代理信息更新成功', 'success')
     closeAllModals()
     loadModule('agents')
   } catch (error) {
-    showNotification('更新失败', 'danger')
+    showNotification(error.response?.data?.error || '更新失败', 'danger')
   }
+}
+
+// 重新生成分享码
+async function regenerateShareCode(id) {
+  if (!confirm('确定要重新生成分享码吗？旧的分享链接将失效。')) return
+  try {
+    const result = await API.post(`/agents/${id}/regenerate-share-code`)
+    showNotification(`分享码已更新: ${result.share_code}`, 'success')
+    editAgent(id) // 刷新编辑弹窗
+  } catch (error) {
+    showNotification('生成失败', 'danger')
+  }
+}
+
+// 显示代理分享链接弹窗
+async function showAgentShareLink(id) {
+  try {
+    const result = await API.get(`/agents/${id}/share-info`)
+    const data = result.data
+    const baseUrl = window.location.origin
+    const shareLink = `${baseUrl}/register?ref=${data.share_code}`
+    const domainLink = data.custom_domain ? `https://${data.custom_domain}/register` : null
+    
+    const content = `
+      <div class="space-y-md">
+        <div class="bg-slate-700/50 rounded-lg p-4">
+          <h4 class="font-semibold mb-3"><i class="fas fa-link mr-2 text-blue-400"></i>注册绑定分享链接</h4>
+          <div class="flex gap-2 mb-2">
+            <input type="text" class="form-input flex-1 font-mono text-sm" value="${shareLink}" readonly id="shareLinkInput">
+            <button onclick="copyToClipboard('shareLinkInput')" class="btn btn-primary btn-sm">
+              <i class="fas fa-copy"></i>
+            </button>
+          </div>
+          <p class="text-gray-400 text-xs">用户通过此链接注册将自动绑定到代理 <strong>${escapeHtml(data.username)}</strong></p>
+        </div>
+        
+        ${domainLink ? `
+        <div class="bg-slate-700/50 rounded-lg p-4">
+          <h4 class="font-semibold mb-3"><i class="fas fa-globe mr-2 text-emerald-400"></i>专属域名链接</h4>
+          <div class="flex gap-2 mb-2">
+            <input type="text" class="form-input flex-1 font-mono text-sm" value="${domainLink}" readonly id="domainLinkInput">
+            <button onclick="copyToClipboard('domainLinkInput')" class="btn btn-success btn-sm">
+              <i class="fas fa-copy"></i>
+            </button>
+          </div>
+          <p class="text-gray-400 text-xs">专属域名注册链接，用户直接访问即可关联</p>
+        </div>
+        ` : `
+        <div class="bg-slate-700/30 rounded-lg p-4 text-center text-gray-400">
+          <i class="fas fa-globe text-2xl mb-2 opacity-50"></i>
+          <p class="text-sm">暂未绑定专属域名</p>
+          <button onclick="editAgent(${id})" class="btn btn-secondary btn-sm mt-2">去绑定</button>
+        </div>
+        `}
+        
+        <div class="bg-slate-700/50 rounded-lg p-4">
+          <h4 class="font-semibold mb-3"><i class="fas fa-chart-bar mr-2 text-amber-400"></i>注册统计</h4>
+          <div class="grid grid-3 gap-md text-center">
+            <div>
+              <div class="text-2xl font-bold text-emerald-400">${data.stats.total_registrations || 0}</div>
+              <div class="text-gray-400 text-sm">总注册</div>
+            </div>
+            <div>
+              <div class="text-2xl font-bold text-blue-400">${data.stats.week_registrations || 0}</div>
+              <div class="text-gray-400 text-sm">近7天</div>
+            </div>
+            <div>
+              <div class="text-2xl font-bold text-amber-400">${data.stats.today_registrations || 0}</div>
+              <div class="text-gray-400 text-sm">今日</div>
+            </div>
+          </div>
+        </div>
+        
+        <div class="flex justify-center">
+          <button onclick="closeAllModals()" class="btn btn-secondary">关闭</button>
+        </div>
+      </div>
+    `
+    closeAllModals()
+    showModal(`分享链接 - ${escapeHtml(data.username)}`, content, { width: '550px' })
+  } catch (error) {
+    showNotification('获取分享信息失败', 'danger')
+  }
+}
+
+// 复制到剪贴板
+function copyToClipboard(inputId) {
+  const input = document.getElementById(inputId)
+  input.select()
+  document.execCommand('copy')
+  showNotification('已复制到剪贴板', 'success')
 }
 
 // ============================================
