@@ -4556,27 +4556,27 @@ app.get('/api/transfers', async (c) => {
   
   try {
     let conditions = ''
-    const params: any[] = []
+    const filterParams: any[] = []
     
     if (startDate) {
       conditions += ' AND DATE(t.created_at) >= ?'
-      params.push(startDate)
+      filterParams.push(startDate)
     }
     if (endDate) {
       conditions += ' AND DATE(t.created_at) <= ?'
-      params.push(endDate)
+      filterParams.push(endDate)
     }
     if (fromUsername) {
       conditions += ' AND fp.username LIKE ?'
-      params.push(`%${fromUsername}%`)
+      filterParams.push(`%${fromUsername}%`)
     }
     if (toUsername) {
       conditions += ' AND tp.username LIKE ?'
-      params.push(`%${toUsername}%`)
+      filterParams.push(`%${toUsername}%`)
     }
     if (status !== null) {
       conditions += ' AND t.status = ?'
-      params.push(status)
+      filterParams.push(status)
     }
     
     const query = `
@@ -4590,11 +4590,11 @@ app.get('/api/transfers', async (c) => {
       ORDER BY t.created_at DESC
       LIMIT ? OFFSET ?
     `
-    params.push(limit, (page - 1) * limit)
+    const queryParams = [...filterParams, limit, (page - 1) * limit]
     
-    const result = await DB.prepare(query).bind(...params).all()
+    const result = await DB.prepare(query).bind(...queryParams).all()
     
-    // 统计
+    // 统计查询使用过滤参数(不包含分页参数)
     const stats = await DB.prepare(`
       SELECT 
         COUNT(*) as total_count,
@@ -4605,7 +4605,7 @@ app.get('/api/transfers', async (c) => {
       LEFT JOIN players fp ON t.from_player_id = fp.id
       LEFT JOIN players tp ON t.to_player_id = tp.id
       WHERE 1=1 ${conditions}
-    `).bind(...params).first()
+    `).bind(...filterParams).first()
     
     return c.json({
       success: true,
